@@ -88,6 +88,7 @@ public:
 	} State;
 
 	typedef struct {
+		double pos_x_ft;
 		double altitude_ft;
 		double speed_m_min;
 		double computed_angle_deg;
@@ -131,7 +132,10 @@ public:
 	{
 		// 0.1ft precision
 		auto altitude_ft = METER_TO_FOOT(altitude);
-		auto altitude_rounded = round(altitude_ft * 10) / 10.0f;
+		auto altitude_rounded = round(altitude_ft * 10.0f) / 10.0f;
+
+		auto pos_x_ft = METER_TO_FOOT(pos_x);
+		auto pos_x_rounded = round(pos_x_ft * 10.0f) / 10.0f;
 
 		// 1m/min 
 		auto speed_rounded = round(sqrt(pow(speed_x, 2) + pow(speed_y, 2)));
@@ -139,6 +143,7 @@ public:
 		auto computed_angle_deg = RAD_TO_DEG(compute_angle());
 
 		return {
+			pos_x_rounded,
 			altitude_rounded,
 			speed_rounded,
 			computed_angle_deg,
@@ -170,7 +175,7 @@ public:
 
 	void set_altitude_transfer(double attack_angle_deg, double climb_rate_m_min, double max_altitude)
 	{
-		double target_altitude_m = max_altitude;
+		double target_altitude_m = FOOT_TO_METER(max_altitude);
 		double angle_rad = DEG_TO_RAD(attack_angle_deg);
 		angle_rad = max(min(angle_rad, MAX_STABLE_ANGLE), - MAX_STABLE_ANGLE);
 
@@ -259,7 +264,7 @@ public:
 		};
 
 		update_speed();
-		update_altitude();
+		update_position();
 	}
 
 private:
@@ -290,6 +295,7 @@ private:
 	microseconds tickrate;
 
 	State state = GROUND;
+	double pos_x = 0;    // m
 	double altitude = 0; // m
 	double speed_x = 0;  // m/min
 	double speed_y = 0;  // m/min
@@ -386,9 +392,10 @@ private:
 		speed_y += (acc_y / US_IN_1MIN) * tickrate.count();
 	}
 
-	void update_altitude()
+	void update_position()
 	{
 		altitude += speed_y * tickrate.count() / US_IN_1MIN;
+		pos_x += speed_x * tickrate.count() / US_IN_1MIN;
 	}
 };
 
@@ -414,7 +421,7 @@ void assert_constraints(const Plane& plane)
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
 	ofstream plane_altitude("./plane_altitude", ios::out | ios::trunc);
 	ofstream plane_speed("./plane_speed", ios::out | ios::trunc);
@@ -430,6 +437,10 @@ int main()
 	cout << "plane initial status:" << endl;
 	plane.dump_status();
 	cout << endl;
+
+	if(argc < 2 || string(argv[1]) != "-v" ) {
+		cout.setstate(ios::failbit);
+	}
 
 	uint64_t tick_count = 0;
 	while(true) {	
@@ -458,10 +469,22 @@ int main()
 			}
 
 			if(time_elapsed == 224) {
-				plane.set_altitude_transfer(221);
+				plane.set_altitude_transfer(700);
+			}
+
+			if(time_elapsed == 400) {
+				plane.set_altitude_transfer(0);
+			}
+
+			if(time_elapsed == 500) {
+				plane.set_altitude_transfer(15, 5000, 40000);
 			}
 			
-			usleep(duration_cast<microseconds>(50ms).count());
+			if(time_elapsed == 600) {
+				return EXIT_SUCCESS;
+			}
+
+//			usleep(duration_cast<microseconds>(50ms).count());
 		}
 
 		try {
@@ -478,4 +501,3 @@ int main()
 
 	return EXIT_SUCCESS;
 }
-
