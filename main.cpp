@@ -130,15 +130,14 @@ public:
 
 	Data get_data() const
 	{
-		// 0.1ft precision
 		auto altitude_ft = METER_TO_FOOT(altitude);
-		auto altitude_rounded = round(altitude_ft * 10.0f) / 10.0f;
+		auto altitude_rounded = round(altitude_ft);
 
 		auto pos_x_ft = METER_TO_FOOT(pos_x);
 		auto pos_x_rounded = round(pos_x_ft * 10.0f) / 10.0f;
 
 		// 1m/min 
-		auto speed_rounded = round(sqrt(pow(speed_x, 2) + pow(speed_y, 2)));
+		auto speed_rounded = round(sqrt(pow(speed_x, 2) + pow(speed_y, 2)) * 10.0f ) / 10.0f;
 
 		auto computed_angle_deg = RAD_TO_DEG(compute_angle());
 
