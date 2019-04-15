@@ -1,0 +1,5 @@
+.*
+!.gitignore
+plane
+plane_altitude
+plane_speed
