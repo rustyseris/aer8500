@@ -1,2 +1,2 @@
 build:
-	clang++ -Wall -Wextra -Werror -g main.cpp -o plane -Wno-error=unused-private-field -Wno-error=unused-variable -Wno-error=unused-parameter -O3
+	clang++ -Wall -Wextra -Werror -g main.cpp -o plane -Wno-error=unused-private-field -Wno-error=unused-variable -Wno-error=unused-parameter -O3 -std=c++98

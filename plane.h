@@ -3,7 +3,6 @@
 
 #include <stdexcept>
 #include <iostream>
-#include <chrono>
 #include <fstream>
 #include <string>
 #include <cmath>
@@ -12,7 +11,16 @@
 #include <cassert>
 
 using namespace std;
-using namespace chrono;
+
+double min(int a, int b) {
+	if(a < b) return a;
+	else return b;
+}
+
+double max(int a, int b) {
+	if(a > b) return a;
+	else return b;
+}
 
 #define M1_IN_FT 3.28084f
 #define FT1_IN_M 0.3048f
@@ -23,6 +31,12 @@ using namespace chrono;
 #define ENGINE_POWER_PER_PERCENT 10.0f
 #define US_IN_1MIN (1000 * 1000 * 60)
 
+#define MAX_ALTITUDE     FOOT_TO_METER(40000.0f) // 40000ft in meters
+#define MAX_STABLE_ANGLE DEG_TO_RAD(15.0f) // 15 deg in radian
+#define GROUND_LEVEL     0.0f // meters
+#define MAX_SPEED        780.0f // m/min
+#define PRECISION_ALTITUDE FOOT_TO_METER(0.1f)
+#define MIN_ALTITUDE_DELTA PRECISION_ALTITUDE / 10.0f
 
 struct AltitudeTransfer {
 	typedef enum {
@@ -39,13 +53,15 @@ struct AltitudeTransfer {
 		TRANSFER_FINISHED
 	} State;
 
-	State state = TRANSFER_FINISHED;
-	Type type = TRANSFER_NONE;
-	double altitude = 0;   // meters
-	double angle = 0;      // rad, [-15, 15]
-	double climb_rate = 0; // m/min, always positive, max value dependent on the angle
+	State state;
+	Type type;
+	double altitude;   // meters
+	double angle;      // rad, [-15, 15]
+	double climb_rate; // m/min, always positive, max value dependent on the angle
 
-	AltitudeTransfer() = default;
+	AltitudeTransfer()
+		: state(TRANSFER_FINISHED), type(TRANSFER_NONE), altitude(0), angle(0), climb_rate(0) {}
+
 	AltitudeTransfer(Type type, double altitude, double angle, double climb_rate)
 		: state(TRANSFER_START), type(type), altitude(altitude), angle(angle), climb_rate(climb_rate) {}
 
@@ -53,8 +69,8 @@ struct AltitudeTransfer {
 	{
 		cout << "transfer state: " << transfer_state_str[state]; 
 		if(state != TRANSFER_FINISHED) {
-			auto altitude_ft = METER_TO_FOOT(altitude);
-			auto angle_deg = RAD_TO_DEG(angle);
+			double altitude_ft = METER_TO_FOOT(altitude);
+			double angle_deg = RAD_TO_DEG(angle);
 			cout << ", type: " << transfer_type_str[type] << endl;
 			cout << fixed << "altitude: " << altitude_ft << "ft (" << altitude <<  "m), angle: " << angle_deg << "deg, climb_rate: " << climb_rate << "m/min";
 		}
@@ -98,15 +114,29 @@ public:
 		State state;
 	} Data;
 
-	const std::string plane_state_str[4] = {
-		"GROUND",
-		"CHANGING_ALTITUDE",
-		"CRUISE_FLIGHT",
-		"STALL"
-	};
+	static const char* plane_state_str[]; 
 	
-	Plane(microseconds timestep, double engine_power = 100)
-		: timestep(timestep), engine_power(engine_power) {};
+	Plane(long int timestep_us, double engine_power = 100)
+		: timestep_us(timestep_us), engine_power(engine_power)
+	{
+		state = GROUND;
+		pos_x = 0;    // m
+		altitude = 0; // m
+		speed_x = 0;  // m/min
+		speed_y = 0;  // m/min
+		acc_x = 0;    // m/min²
+		acc_y = 0;    // m/min²
+
+		speed_transfer_ending_acc_x = 0;
+		speed_transfer_ending_acc_y = 0;
+		speed_transfer_beginning_acc_x = 0;
+		speed_transfer_beginning_acc_y = 0;
+
+		altitude_speed_transfer_beginning_end = 0;
+		altitude_speed_transfer_ending_start = 0;
+
+		engine_power = 0;	
+	};
 
 	void dump_status()
 	{
@@ -144,13 +174,15 @@ public:
 
 		auto computed_angle_deg = RAD_TO_DEG(compute_angle());
 
-		return {
+		Data result = {
 			pos_x_rounded,
 			altitude_rounded,
 			speed_rounded,
 			computed_angle_deg,
 			state
 		};
+
+		return result;
 	}
 
 	void set_altitude_transfer(double target_altitude_ft)
@@ -203,7 +235,7 @@ public:
 		compute_speed_transfers();
 		switch(altitude_transfer.state) {
 			case AltitudeTransfer::TRANSFER_START: {
-				state = State::CHANGING_ALTITUDE;	
+				state = CHANGING_ALTITUDE;	
 				altitude_transfer.state = AltitudeTransfer::TRANSFER_SPEED_TRANSFER_BEGINNING;
 				break;
 			}
@@ -286,44 +318,39 @@ private:
 		double distance_y;
 	} SpeedTransferData;
 	
-	const double MAX_ALTITUDE = FOOT_TO_METER(40000.0f); // 40000ft in meters
-	const double MAX_STABLE_ANGLE = DEG_TO_RAD(15.0f); // 15 deg in radian
-	const double GROUND_LEVEL = 0.0f; // meters
-	const double MAX_SPEED = 780.0f; // m/min
-	const double PRECISION_ALTITUDE = FOOT_TO_METER(0.1f);
-	const double MIN_ALTITUDE_DELTA = PRECISION_ALTITUDE / 10.0f;
-	
 	AltitudeTransfer altitude_transfer;
-	microseconds timestep;
+	long int timestep_us;
 
-	State state = GROUND;
-	double pos_x = 0;    // m
-	double altitude = 0; // m
-	double speed_x = 0;  // m/min
-	double speed_y = 0;  // m/min
-	double acc_x = 0;    // m/min²
-	double acc_y = 0;    // m/min²
+	State state;
+	double pos_x;    // m
+	double altitude; // m
+	double speed_x;  // m/min
+	double speed_y;  // m/min
+	double acc_x;    // m/min²
+	double acc_y;    // m/min²
 
-	double speed_transfer_ending_acc_x = 0;
-	double speed_transfer_ending_acc_y = 0;
-	double speed_transfer_beginning_acc_x = 0;
-	double speed_transfer_beginning_acc_y = 0;
+	double speed_transfer_ending_acc_x;
+	double speed_transfer_ending_acc_y;
+	double speed_transfer_beginning_acc_x;
+	double speed_transfer_beginning_acc_y;
 
-	double altitude_speed_transfer_beginning_end = 0;
-	double altitude_speed_transfer_ending_start = 0;
+	double altitude_speed_transfer_beginning_end;
+	double altitude_speed_transfer_ending_start;
 
-	double engine_power = 0;
+	double engine_power;
 
 	void compute_speed_transfers()
 	{
 		if(altitude_transfer.state == AltitudeTransfer::TRANSFER_SPEED_TRANSFER_BEGINNING) {
-			auto speed_transfer_beginning_result = compute_speed_transfer({
+			SpeedTransferInfo beginning_info = {
 				engine_power * ENGINE_POWER_PER_PERCENT,
 				speed_y,
 				speed_x,
 				altitude_transfer.climb_rate,
 				altitude_transfer.climb_rate / tan(altitude_transfer.angle),
-			});
+			};
+
+			SpeedTransferData speed_transfer_beginning_result = compute_speed_transfer(beginning_info);
 
 			altitude_speed_transfer_beginning_end = altitude + speed_transfer_beginning_result.distance_y;
 			speed_transfer_beginning_acc_x = speed_transfer_beginning_result.acc_x;
@@ -332,13 +359,14 @@ private:
 	
 		if(altitude_transfer.state == AltitudeTransfer::TRANSFER_SPEED_TRANSFER_BEGINNING ||
 		   altitude_transfer.state == AltitudeTransfer::TRANSFER_SPEED_TRANSFER_ENDING) {
-			auto speed_transfer_end_result = compute_speed_transfer({
+			SpeedTransferInfo ending_info = {
 				engine_power * ENGINE_POWER_PER_PERCENT,
 				speed_y,
 				speed_x,
 				0.0f,
 				MAX_SPEED
-			});
+			};
+			SpeedTransferData speed_transfer_end_result = compute_speed_transfer(ending_info);
 
 			altitude_speed_transfer_ending_start = altitude_transfer.altitude - speed_transfer_end_result.distance_y;
 			speed_transfer_ending_acc_x = speed_transfer_end_result.acc_x;
@@ -349,25 +377,25 @@ private:
 	SpeedTransferData compute_speed_transfer(const SpeedTransferInfo& info) const {
 		SpeedTransferData result;
 
-		auto desired_speed_x = info.desired_speed_x;
-		auto desired_speed_y = info.desired_speed_y;
+		double desired_speed_x = info.desired_speed_x;
+		double desired_speed_y = info.desired_speed_y;
 
 		// compute the share of the available acceleration that goes to each component (x & y)
-		auto delta_speed_y = desired_speed_y - info.speed_y;
-		auto delta_speed_x = desired_speed_x - info.speed_x;
+		double delta_speed_y = desired_speed_y - info.speed_y;
+		double delta_speed_x = desired_speed_x - info.speed_x;
 
-		auto desired_speed = sqrt(pow(desired_speed_x, 2) + pow(desired_speed_y, 2));
+		double desired_speed = sqrt(pow(desired_speed_x, 2) + pow(desired_speed_y, 2));
 		if(desired_speed > MAX_SPEED) {
-			auto speed_ratio = MAX_SPEED / desired_speed;
+			double speed_ratio = MAX_SPEED / desired_speed;
 			delta_speed_x *= speed_ratio;
 			delta_speed_y *= speed_ratio;
 		}
 
-		auto delta_speed_angle = atan(delta_speed_y / delta_speed_x);
+		double delta_speed_angle = atan(delta_speed_y / delta_speed_x);
 		delta_speed_angle = max(min(delta_speed_angle, MAX_STABLE_ANGLE), -MAX_STABLE_ANGLE);
 
-		auto share_acc_y = sin(delta_speed_angle);
-		auto share_acc_x = cos(delta_speed_angle);
+		double  share_acc_y = sin(delta_speed_angle);
+		double share_acc_x = cos(delta_speed_angle);
 
 		// set the acceleration for each component
 		result.acc_y = copysign(info.acceleration * share_acc_y, delta_speed_y);
@@ -375,8 +403,8 @@ private:
 
 		// compute the distance that we will have to travel in the y direction (altitude)
 		// to complete that first speed transfer
-		auto average_speed_y = (desired_speed_y + info.speed_y) / 2.0f;
-		auto speed_transfer_beginning_duration = delta_speed_y / result.acc_y;
+		double average_speed_y = (desired_speed_y + info.speed_y) / 2.0f;
+		double speed_transfer_beginning_duration = delta_speed_y / result.acc_y;
 	
 		result.distance_y = speed_transfer_beginning_duration * average_speed_y;
 
@@ -390,20 +418,20 @@ private:
 
 	void update_speed()
 	{
-		speed_x += (acc_x / US_IN_1MIN) * timestep.count();
-		speed_y += (acc_y / US_IN_1MIN) * timestep.count();
+		speed_x += (acc_x / US_IN_1MIN) * timestep_us;
+		speed_y += (acc_y / US_IN_1MIN) * timestep_us;
 	}
 
 	void update_position()
 	{
-		altitude += speed_y * timestep.count() / US_IN_1MIN;
-		pos_x += speed_x * timestep.count() / US_IN_1MIN;
+		altitude += speed_y * timestep_us / US_IN_1MIN;
+		pos_x += speed_x * timestep_us / US_IN_1MIN;
 	}
 };
 
 void assert_constraints(const Plane& plane)
 {
-	auto plane_data = plane.get_data();
+	Plane::Data plane_data = plane.get_data();
 
 	if(plane_data.altitude_ft >= FOOT_TO_METER(40000.0f)) {
 		throw std::runtime_error("too high");
@@ -421,6 +449,13 @@ void assert_constraints(const Plane& plane)
 		throw std::runtime_error("too faaaaaaaaaaaaast");
 	}
 }
+
+const char* Plane::plane_state_str[] =  {
+	"GROUND",
+	"CHANGING_ALTITUDE",
+	"CRUISE_FLIGHT",
+	"STALL"
+};
 
 #endif // PLANE_H
 

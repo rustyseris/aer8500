@@ -6,11 +6,11 @@ int main(int argc, char* argv[])
 	ofstream plane_speed("./plane_speed", ios::out | ios::trunc);
 	ofstream plane_angle("./plane_angle", ios::out | ios::trunc);
 
-	auto timestep = 100us;
+	auto timestep_us = 100;
 	// every minute in simulation time
 	auto tick_count_before_dump = 10 * 1000 + 27; 
 
-	Plane plane(timestep);
+	Plane plane(timestep_us);
 	plane.set_altitude_transfer(500);
 
 	cout << "plane initial status:" << endl;
@@ -21,21 +21,21 @@ int main(int argc, char* argv[])
 		cout.setstate(ios::failbit);
 	}
 
-	uint64_t tick_count = 0;
+	long long tick_count = 0;
 	while(true) {	
 		tick_count++;
 		plane.tick();
 		
 		// every minute
 		if(tick_count % tick_count_before_dump == 0) {
-			auto time_elapsed = duration_cast<seconds>(timestep * tick_count).count();
+			auto time_elapsed = timestep_us * tick_count;
 			auto plane_data = plane.get_data();
 
 			plane_altitude << time_elapsed << '\t' << plane_data.altitude_ft << "ft" << endl;
 			plane_speed << time_elapsed << '\t' << plane_data.speed_m_min << "m/min" << endl;
 			plane_angle << time_elapsed << '\t' << plane_data.computed_angle_deg << "deg" << endl;
 
-			cout << '[' << time_elapsed << "s]" << endl;
+			cout << '[' << time_elapsed << "us]" << endl;
 			plane.dump_status();
 			cout << endl;
 
