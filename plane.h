@@ -23,7 +23,6 @@ using namespace chrono;
 #define ENGINE_POWER_PER_PERCENT 10.0f
 #define US_IN_1MIN (1000 * 1000 * 60)
 
-
 struct AltitudeTransfer {
 	typedef enum {
 		TRANSFER_ASCENDING,
@@ -94,6 +93,7 @@ public:
 		double pos_x_ft;
 		double altitude_ft;
 		double speed_m_min;
+		double vertical_speed;
 		double computed_angle_deg;
 		State state;
 	} Data;
@@ -148,6 +148,7 @@ public:
 			pos_x_rounded,
 			altitude_rounded,
 			speed_rounded,
+			speed_y,
 			computed_angle_deg,
 			state
 		};
@@ -405,7 +406,7 @@ void assert_constraints(const Plane& plane)
 {
 	auto plane_data = plane.get_data();
 
-	if(plane_data.altitude_ft >= FOOT_TO_METER(40000.0f)) {
+	if(plane_data.altitude_ft > 40000.0f) {
 		throw std::runtime_error("too high");
 	}
 
