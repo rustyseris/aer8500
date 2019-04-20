@@ -21,6 +21,7 @@ int main(int argc, char* argv[])
 	cout << endl;
 
 	static auto wait_until = 0;
+	static auto done = false;
 
 	uint64_t tick_count = 0;
 	while(true) {	
@@ -40,8 +41,17 @@ int main(int argc, char* argv[])
 
 			cout << '[' << time_elapsed << "s]" << endl;
 			plane.dump_status();
-			cout << endl;	
-			// usleep(duration_cast<microseconds>(50ms).count());	
+			cout << endl;
+
+
+			if(plane_data.altitude_ft == 500 && !done) {
+				done = true;
+				plane.set_altitude_transfer(plane_data.altitude_ft);
+			} else if(done && plane.is_altitude_transfer_done()) {
+				done = false;
+			}
+
+			usleep(duration_cast<microseconds>(50ms).count());	
 		}
 	
 		if((wait_until == 0 && plane.is_altitude_transfer_done()) || (wait_until != 0 && time_elapsed > wait_until)) {

@@ -41,7 +41,7 @@ struct AltitudeTransfer {
 	State state = TRANSFER_FINISHED;
 	Type type = TRANSFER_NONE;
 	double altitude = 0;   // meters
-	double angle = 0;      // rad, [-15, 15]
+	double angle = 0;      // rad, [-15deg, 15deg]
 	double climb_rate = 0; // m/min, always positive, max value dependent on the angle
 
 	AltitudeTransfer() = default;
@@ -118,7 +118,8 @@ public:
 		auto speed_m_s = plane_data.speed_m_min / 60.0f;
 
 		cout << fixed << "state: " << plane_state_str[state] << endl;
-		cout << fixed << "altitude: " << plane_data.altitude_ft << "ft (" << altitude << "m)" << endl;
+		cout << fixed << "altitude: " << plane_data.altitude_ft << "ft (" << altitude << "m), ";
+		cout << "step: " << altitude_step() << "m" << endl;
 		cout << fixed << "computed angle: " << computed_angle << "rad (" << computed_angle_deg << "deg)" << endl;
 		cout << fixed << "speed: " << plane_data.speed_m_min << "m/min (" << speed_m_s << "m/s) (x=" << speed_x << "m/min, y=" << speed_y << "m/min)" << endl;
 		cout << fixed << "acc: "<< acceleration << "m/min² " << "(x=" << acc_x << "m/min², y=" << acc_y << "m/min²)" << endl;
@@ -168,17 +169,24 @@ public:
 			transfer_type = AltitudeTransfer::TRANSFER_DESCENDING;
 			angle *= -1;
 		} else {
-			altitude_transfer = AltitudeTransfer();
-			return;
+			if(speed_y > 0) {
+				transfer_type = AltitudeTransfer::TRANSFER_DESCENDING;
+				angle *= -1;
+			} else if(speed_y < 0) {
+				transfer_type = AltitudeTransfer::TRANSFER_ASCENDING;
+			} else {
+				altitude_transfer = AltitudeTransfer();
+				return;
+			}
 		}
 
 		double climb_rate = MAX_SPEED * sin(angle);
 		altitude_transfer = AltitudeTransfer(transfer_type, target_altitude_m, angle, climb_rate);
 	}
 
-	void set_altitude_transfer(double attack_angle_deg, double climb_rate_m_min, double max_altitude)
+	void set_altitude_transfer(double attack_angle_deg, double climb_rate_m_min)
 	{
-		double target_altitude_m = FOOT_TO_METER(max_altitude);
+		double target_altitude_m = altitude;
 		double angle_rad = DEG_TO_RAD(attack_angle_deg);
 		angle_rad = max(min(angle_rad, MAX_STABLE_ANGLE), - MAX_STABLE_ANGLE);
 
@@ -187,10 +195,13 @@ public:
 		double climb_rate = min(climb_rate_m_min, max_climb_rate);
 
 		auto transfer_type = AltitudeTransfer::TRANSFER_NONE;
-		if(angle_rad > 0)
+		if(angle_rad > 0) {
 			transfer_type = AltitudeTransfer::TRANSFER_ASCENDING;
-		else if(angle_rad < 0)
+			target_altitude_m = MAX_ALTITUDE;
+		} else if(angle_rad < 0) {
 			transfer_type = AltitudeTransfer::TRANSFER_DESCENDING;
+			target_altitude_m = 0;
+		}
 
 		altitude_transfer = AltitudeTransfer(transfer_type, target_altitude_m, abs(angle_rad), climb_rate);
 	}
@@ -202,6 +213,8 @@ public:
 	void tick()
 	{
 		compute_speed_transfers();
+		bool ascending = altitude_transfer.type == AltitudeTransfer::TRANSFER_ASCENDING;
+
 		switch(altitude_transfer.state) {
 			case AltitudeTransfer::TRANSFER_START: {
 				state = State::CHANGING_ALTITUDE;	
@@ -210,9 +223,9 @@ public:
 			}
 
 			case AltitudeTransfer::TRANSFER_SPEED_TRANSFER_BEGINNING: {
-				bool speed_transfer_done =
-					abs(speed_y - altitude_transfer.climb_rate) < 0.01 ||
-					abs(altitude_speed_transfer_ending_start - altitude) < MIN_ALTITUDE_DELTA;
+				bool speed_transfer_done =  ascending ?
+					(altitude >= altitude_speed_transfer_beginning_end || altitude >= altitude_speed_transfer_ending_start) :
+					(altitude <= altitude_speed_transfer_beginning_end || altitude <= altitude_speed_transfer_ending_start);
 
 				if(!speed_transfer_done) {
 					acc_y = speed_transfer_beginning_acc_y;
@@ -226,7 +239,9 @@ public:
 			}
 
 			case AltitudeTransfer::TRANSFER_STEADY: {
-				bool steady_transfer_done = abs(altitude_speed_transfer_ending_start - altitude) < MIN_ALTITUDE_DELTA;
+				bool steady_transfer_done =  ascending ?
+					(altitude >= altitude_speed_transfer_ending_start) :
+					(altitude <= altitude_speed_transfer_ending_start);
 
 				if(!steady_transfer_done) {
 					break;
@@ -237,8 +252,8 @@ public:
 
 			case AltitudeTransfer::TRANSFER_SPEED_TRANSFER_ENDING: {
 				bool end_speed_transfer_done =
-					abs(altitude_transfer.altitude - altitude) < MIN_ALTITUDE_DELTA ||
-					abs(speed_y) < 0.1;
+					(ascending ? altitude >= altitude_transfer.altitude : altitude <= altitude_transfer.altitude) ||
+					compute_angle() == 0;
 
 				if(!end_speed_transfer_done) {
 					acc_y = speed_transfer_ending_acc_y;
@@ -254,8 +269,8 @@ public:
 			}
 
 			case AltitudeTransfer::TRANSFER_FINISHED: {
-				auto plane_data = get_data();
-				if(plane_data.altitude_ft == 0) {
+				double delta_altitude = altitude_step() / 2.0f;
+				if(altitude < delta_altitude) {
 					speed_x = 0;
 					state = GROUND;
 				} else {
@@ -291,8 +306,6 @@ private:
 	const double MAX_STABLE_ANGLE = DEG_TO_RAD(15.0f); // 15 deg in radian
 	const double GROUND_LEVEL = 0.0f; // meters
 	const double MAX_SPEED = 780.0f; // m/min
-	const double PRECISION_ALTITUDE = FOOT_TO_METER(0.1f);
-	const double MIN_ALTITUDE_DELTA = PRECISION_ALTITUDE / 10.0f;
 	
 	AltitudeTransfer altitude_transfer;
 	microseconds timestep;
@@ -389,15 +402,25 @@ private:
 		return (speed_x != 0) ? atan(speed_y / speed_x) : 0.0f;
 	}
 
+	double altitude_step() const
+	{
+		return speed_y * timestep.count() / US_IN_1MIN;
+	}
+
+	double climb_rate_step() const
+	{
+		return (acc_y / US_IN_1MIN) * timestep.count();
+	}
+
 	void update_speed()
 	{
 		speed_x += (acc_x / US_IN_1MIN) * timestep.count();
-		speed_y += (acc_y / US_IN_1MIN) * timestep.count();
+		speed_y += climb_rate_step();
 	}
 
 	void update_position()
 	{
-		altitude += speed_y * timestep.count() / US_IN_1MIN;
+		altitude += altitude_step();
 		pos_x += speed_x * timestep.count() / US_IN_1MIN;
 	}
 };
